@@ -623,6 +623,62 @@ class ConfirmDeleteDialog(_DialogBase):
         self.accept()
 
 
+# ================================================================ 检查更新（第 124 轮）
+class UpdateChoiceDialog(_DialogBase):
+    """点「检查更新」后先让用户选下载方式：网盘 / 确认(GitHub) / 取消。
+
+    ``self.choice`` = "netdisk" / "github" / ""（取消）。
+    文案里带 release notes 摘要，让玩家先看这次更新了什么再决定。
+    """
+
+    def __init__(self, parent, info):
+        super().__init__(parent, width=470, title="发现新版本")
+        self.choice = ""
+        from ..core import update as upd
+        from ..core.config import APP_VERSION
+        ver = str(info.get("version") or "")
+        tip = QLabel(f"当前版本 v{APP_VERSION}　→　新版本 v{ver}")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color:#1f2733;font-size:14px;font-weight:bold;")
+        self.body.addWidget(tip)
+
+        notes = str(info.get("notes") or "").strip()
+        if notes:
+            # 只显示前 600 字，太长会顶爆对话框（release notes 可能很长）
+            short = notes[:600] + ("\n…（完整内容见 GitHub 发布页）" if len(notes) > 600 else "")
+            nb = QLabel("本次更新内容：\n" + short)
+            nb.setWordWrap(True)
+            nb.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            nb.setStyleSheet(
+                "color:#3a4654;font-size:11px;background:rgba(31,39,51,10);"
+                "border-radius:10px;padding:9px;")
+            self.body.addWidget(nb)
+
+        hint = QLabel("网盘：打开夸克分享链接，自行下载安装向导。\n"
+                      "确认：直接用 GitHub 下载，在启动器内显示进度；"
+                      "下载完关闭程序即静默更新，下次打开就是最新版。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#5a6675;font-size:11px;")
+        self.body.addWidget(hint)
+
+        # 从尾部取按钮（itemAt(0) 是 spacer）
+        self.add_buttons([("取消", "ghost", self.reject),
+                          ("网盘", "ghost", self._pick_netdisk),
+                          ("确认", "accent", self._pick_github)])
+        self._quark_url = upd.QUARK_URL
+
+    def _pick_netdisk(self):
+        self.choice = "netdisk"
+        self.accept()
+
+    def _pick_github(self):
+        self.choice = "github"
+        self.accept()
+
+    def open_netdisk(self):
+        QDesktopServices.openUrl(QUrl(self._quark_url))
+
+
 # ================================================================ 创建游戏分类
 class CategoryDialog(_DialogBase):
     """创建分类（第 105 轮）：命名 + 选种类（游戏版本 / 整合包）。
@@ -1633,6 +1689,7 @@ class SettingsDialog(_DialogBase):
             ("下载镜像源", self._page_mirror),
             ("微软登录", self._page_msa),
             ("目录迁移", self._page_migrate),
+            ("关于", self._page_about),
         ]
         for i, (label, builder) in enumerate(pages):
             b = QPushButton(label)
@@ -3338,6 +3395,168 @@ class SettingsDialog(_DialogBase):
         lay.addStretch(1)
         return w
 
+    # ---------------- 关于 / 更新（第 124 轮 / 1.9.3）----------------
+    def _page_about(self):
+        """关于页：应用图标、名称、版本号、检查更新、自动更新开关。"""
+        from ..core.config import APP_NAME, APP_VERSION, CONFIG
+        from ..core import update as upd
+        from ..ui.branding import icon_pixmap
+
+        w, lay = self._page("关于", "查看应用信息，检查并安装更新。")
+        lay.addSpacing(6)
+
+        # 顶部信息卡：图标 + 名称 + 版本，一张磨砂卡
+        card = FrostCard()
+        crow = QHBoxLayout(card)
+        crow.setContentsMargins(16, 14, 16, 14)
+        crow.setSpacing(16)
+        ico = QLabel()
+        pm = icon_pixmap(64)
+        if not pm.isNull():
+            ico.setPixmap(pm.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        ico.setFixedSize(64, 64)
+        crow.addWidget(ico)
+
+        ctxt = QVBoxLayout()
+        ctxt.setSpacing(4)
+        name = QLabel(APP_NAME)
+        nf = QFont(theme.FONT)
+        nf.setPixelSize(18)
+        nf.setBold(True)
+        name.setFont(nf)
+        ctxt.addWidget(name)
+        ver = QLabel(f"版本 v{APP_VERSION}")
+        ver.setStyleSheet("color:#5a6675;font-size:12px;")
+        ctxt.addWidget(ver)
+        ctxt.addStretch(1)
+        crow.addLayout(ctxt, 1)
+        lay.addWidget(card)
+
+        # 自动更新开关（胶囊式，默认开）
+        auto_on = bool(CONFIG.get("auto_update", True))
+        sw_row = QHBoxLayout()
+        sw_row.setContentsMargins(2, 6, 2, 6)
+        sw_txt = QVBoxLayout()
+        sw_txt.setSpacing(2)
+        sw_title = QLabel("自动更新")
+        sw_title.setStyleSheet("color:#1f2733;font-size:13px;font-weight:600;")
+        sw_desc = QLabel("开启后，关闭本程序时会在后台静默安装已下载的新版，下次打开即为最新版。")
+        sw_desc.setStyleSheet(_PAGE_TIP)
+        sw_desc.setWordWrap(True)
+        sw_txt.addWidget(sw_title)
+        sw_txt.addWidget(sw_desc)
+        sw_row.addLayout(sw_txt, 1)
+        self._auto_switch = PillSwitch(auto_on)
+        self._auto_switch.toggled.connect(self._on_auto_toggle)
+        sw_row.addWidget(self._auto_switch)
+        lay.addLayout(sw_row)
+
+        # 检查更新按钮
+        btn_row = QHBoxLayout()
+        chk = PillButton("检查更新", "accent")
+        chk.setFixedHeight(34)
+        chk.setMinimumWidth(110)
+        chk.clicked.connect(self._do_check_update)
+        btn_row.addWidget(chk)
+        btn_row.addStretch(1)
+        lay.addLayout(btn_row)
+        lay.addSpacing(4)
+        note = QLabel("更新包来自 GitHub 发布页，下载后经 SHA256 校验；也可在检查更新时改用网盘下载。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#8a95a3;font-size:11px;")
+        lay.addWidget(note)
+        lay.addStretch(1)
+        return w
+
+    def _on_auto_toggle(self, on):
+        from ..core.config import CONFIG
+        CONFIG.set("auto_update", bool(on))
+        try:
+            CONFIG.save()
+        except Exception:
+            pass
+
+    def _do_check_update(self):
+        """后台检查 GitHub Release；有更新先弹「网盘 / 确认 / 取消」。"""
+        from ..core import update as upd
+        from ..core.config import APP_VERSION
+
+        def done(info):
+            if not info:
+                Toast.show_toast(self, f"已是最新版本（v{APP_VERSION}）", kind="info")
+                return
+            dlg = UpdateChoiceDialog(self, info)
+            dlg.exec()
+            choice = getattr(dlg, "choice", "")
+            if choice == "netdisk":
+                dlg.open_netdisk()
+            elif choice == "github":
+                self._run_update_download(info)
+
+        def err(e):
+            Toast.show_toast(self, "检查更新失败：" + str(e)[:120],
+                             kind="error", ms=5000)
+
+        Toast.show_toast(self, "正在检查更新…", kind="info")
+        run_async(upd.check_for_update, on_done=done, on_err=err)
+
+    def _run_update_download(self, info):
+        """在启动器内跑下载进度条，完成后记待安装标记，退出时静默装。"""
+        from ..core import update as upd
+        from ..core import tasks as task_mod
+        from ..core.tasks import TASKS
+
+        task = TASKS.create(f"下载更新 v{info.get('version', '')}", "update")
+        dlg = UpdateProgressDialog(self.window(), version=info.get("version", ""))
+        state = {}
+
+        def finished(t):
+            if t.status != "done":
+                return
+            path = state.get("path")
+            if not path:
+                return
+            try:
+                upd.mark_pending(info, path)
+            except Exception as e:                       # noqa: BLE001
+                Toast.show_toast(self, "更新已下载，但记录失败：" + str(e)[:80],
+                                 kind="error", ms=5000)
+                return
+            from ..core.config import CONFIG
+            auto = bool(CONFIG.get("auto_update", True))
+            tail = "关闭本程序后将自动安装。" if auto else \
+                   "自动更新已关闭，可重新打开开关后关闭程序安装。"
+            Toast.show_toast(self,
+                             f"更新 v{info.get('version', '')} 已下载并校验通过。{tail}",
+                             kind="info", ms=6000)
+
+        dlg.bind(task, on_finished=finished)
+        dlg.show()
+
+        def work():
+            TASKS.set_phase(task.tid, "正在下载安装向导")
+            path = upd.download_setup(info,
+                                      progress_cb=task_mod.progress_for(task.tid),
+                                      cancel_flag=task.cancel_flag)
+            state["path"] = path
+            TASKS.set_phase(task.tid, "下载完成，等待关闭程序后安装")
+            return path
+
+        def done(_path):
+            TASKS.finish(task.tid, "done", "更新包已就绪")
+
+        def err(e):
+            from ..core.tasks import TASKS as _T
+            msg = str(e)
+            if "已取消" in msg:
+                _T.finish(task.tid, "cancelled", "已取消")
+            else:
+                _T.finish(task.tid, "failed", msg[:120])
+                Toast.show_toast(self, "下载更新失败：" + msg[:100],
+                                 kind="error", ms=5000)
+
+        run_async(work, on_done=done, on_err=err)
+
     def _pick_launcher(self):
         from .fspicker import pick_file
         p = pick_file(self, "选择官方启动器",
@@ -3621,6 +3840,18 @@ def _size_text(n):
     if n >= 1 << 10:
         return f"{n / (1 << 10):.0f} KB"
     return f"{n} B"
+
+
+class UpdateProgressDialog(ProgressDailog):
+    """GitHub 下载进度的复用壳（第 124 轮）：只在标题/文案上特化更新场景。
+
+    定义必须放在 ProgressDailog 之后（继承基类）；真正的下载在 run_async
+    工作线程跑，进度写 TASKS，窗口靠基类轮询展示，回调绝不碰 QWidget。
+    """
+
+    def __init__(self, parent, version=""):
+        super().__init__(parent, title="正在下载更新")
+        self.info.setText(f"正在从 GitHub 下载 v{version} 安装向导…")
 
 
 def _dep_icon_url(row):
