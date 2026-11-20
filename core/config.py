@@ -337,7 +337,7 @@ class Config:
             "auto_chinese": True,
             # 第一百二十四轮：启动器自更新。默认开——关程序后静默更新，下次打开即新版。
             "auto_update": True,
-            # 仓库地址（空 = 用 update.py 默认 Yifengjin1/Bagui-Launcher；可改）
+            # 仓库地址（空 = 用 update.py 默认 Yifengjun1/Bagui-Launcher；可改）
             "update_repo": "",
             # 上次检查到的最新版本（用于「有新版本」提示，不参与逻辑判断）
             "update_last_seen": "",

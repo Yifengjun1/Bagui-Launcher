@@ -6,7 +6,7 @@
    不是裸主程序。所以静默更新的正解是：下载新向导 → 退出时分离进程
    静默运行向导、由向导的 payload 覆盖主程序，而不是在主进程里直接替换
    —— onefile 运行中 exe 被 Windows 锁死，直接替换必失败（ROADMAP 坑 1/2）。
-2. **仓库地址可配置**：默认 owner 是 Yifengjin1（已与作者确认），
+2. **仓库地址可配置**：默认 owner 是 Yifengjun1（已与作者核实，中间是 jun），
    允许 `update_repo` 配置覆盖；全失败才明确报错，绝不静默降级成「已是最新」。
 3. **线程铁律**：检查 / 下载全在工作线程（run_async），进度只写纯数据，
    回调不碰 QWidget；取消用 list 标志 `cancel_flag[0]`（与 dl.py 同口径）。
@@ -26,11 +26,12 @@ import requests
 from . import bbsmc
 from .config import APP_VERSION, CONFIG, DATA_DIR_NAME
 
-# 作者的 GitHub 用户名已确认为 Yifengjin1（第 124 轮）。
-# 注意：Yifengjin（没有那个 1）是另一位 Java 开源作者，绝不能当候选，
-# 否则会误连到别人的同名仓库、给出错误结果。可用 update_repo 配置覆盖。
+# 作者的 GitHub 用户名已核实为 Yifengjun1（中间是 jun，第 125 轮更正）。
+# 注意：Yifengjin1（jin）/ Yifengjin 都不是本人的号（后者是另一位 Java 作者），
+# 写错就 404。已用网页实测 https://github.com/Yifengjun1/Bagui-Launcher/releases 可打开。
+# 可用 update_repo 配置覆盖。
 REPO_CANDIDATES = [
-    "Yifengjin1/Bagui-Launcher",
+    "Yifengjun1/Bagui-Launcher",
 ]
 QUARK_URL = "https://pan.quark.cn/s/a3180fa2faf1"
 GITHUB_API = "https://api.github.com"
