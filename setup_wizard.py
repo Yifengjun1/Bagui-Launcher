@@ -1298,7 +1298,52 @@ def _app_icon():
     return app_icon(128)
 
 
+def _silent_update():
+    """第 124 轮：被启动器在关程序后静默调起（--silent-update）。
+
+    此时旧主程序已退出、exe 不再被锁，直接把**本向导随包的新主程序**
+    复制覆盖到上次的安装目录即可。只替换程序文件，不碰游戏目录 / 配置 /
+    快捷方式（那些是装的时候定的，更新不该重来一遍）。日志写到更新目录。
+    """
+    from app.core import update as upd
+    try:
+        dst_dir = remembered_install_dir() or default_install_dir()
+        exe_dst = os.path.join(dst_dir, f"{APP_NAME}.exe")
+        if not os.path.isdir(dst_dir):
+            upd._log(f"静默更新失败：安装目录不存在 {dst_dir}")
+            return 1
+        pl = resolve_payload()
+        if pl.get("error") is not None:
+            upd._log("静默更新失败：" + str(pl["error"]))
+            return 1
+        src = pl.get("exe") or ""
+        if not src or not os.path.isfile(src):
+            upd._log("静默更新失败：随包主程序缺失")
+            return 1
+        want = ""
+        if pl.get("verified"):
+            try:
+                want = _sha256(src)
+            except OSError:
+                pass
+        _copy_one(src, exe_dst, want)
+        upd._log(f"静默更新完成：{pl.get('version') or '?'} → {exe_dst}")
+        upd.clear_pending()
+        return 0
+    except Exception as e:                              # noqa: BLE001
+        try:
+            from app.core import update as upd2
+            upd2._log("静默更新异常：" + str(e))
+        except Exception:
+            pass
+        return 1
+
+
 def main():
+    # 第 124 轮：静默更新模式——被分离进程在旧程序退出后调起，无界面直接覆盖 exe。
+    # 必须在建 QApplication 之前分流，避免为了替换一个文件拉起整套 GUI。
+    if "--silent-update" in sys.argv[1:]:
+        sys.exit(_silent_update())
     app = QApplication(sys.argv)
     app.setApplicationName(f"{APP_NAME} 安装向导")
     app.setFont(QFont(theme.FONT, 10))

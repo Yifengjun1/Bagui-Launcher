@@ -450,9 +450,70 @@ class MainWindow(QWidget):
         # 启动后自检整合包档案：lastVersionId 为空会让官启报 REQUEST_FAILED，
         # 静默修好再提示（放后台，不阻塞首屏）
         QTimer.singleShot(2600, self._auto_repair_profiles)
+        # 自动更新（第 125 轮）：延迟到首屏之后，后台静默检查并下载新向导，
+        # 关程序时由 schedule_silent_install 静默装。仅安装版 + 开关开才动作。
+        QTimer.singleShot(4000, self._auto_check_update)
         # 引导教程（第八十轮）：等主页卡片、整合包首屏都画完再起，否则量到的是
         # 还没摆好的几何，高亮框会瞄到空处。开关关着 / 已经走过就不再起。
         QTimer.singleShot(1500, self._maybe_tour)
+
+    def _auto_check_update(self):
+        """第 125 轮：自动更新——后台检查并下载新版向导，关程序时静默装。
+
+        只在**真安装版**（frozen）+ 开关开时动作：源码跑的回归既连不上 GitHub
+        （沙箱代理劫持），也没法真静默替换 exe，绝不能触发。全程不弹窗打扰，
+        只在下载就绪后发一条 Toast 告知「关程序即更新」。失败一律静默留痕，
+        不影响启动；玩家仍可到「关于」页手动检查。
+        """
+        if not getattr(sys, "frozen", False):
+            return
+        if not bool(CONFIG.get("auto_update", True)):
+            return
+        try:
+            from .core import update as upd
+            from .core import tasks as task_mod
+            from .core.tasks import TASKS
+        except Exception:                               # noqa: BLE001
+            return
+
+        def checked(info):
+            if not info:
+                return                                   # 已是最新
+            # 已有同版本的待装包就不重复下
+            pd = upd.pending()
+            if pd and str(pd.get("version", "")) == str(info.get("version", "")):
+                return
+            task = TASKS.create(f"后台下载更新 v{info.get('version', '')}", "update")
+            Toast.show_toast(
+                self, f"发现新版本 v{info.get('version', '')}，正在后台下载，关闭程序后自动安装",
+                kind="info", ms=5000)
+
+            def work():
+                TASKS.set_phase(task.tid, "后台下载更新")
+                path = upd.download_setup(
+                    info, progress_cb=task_mod.progress_for(task.tid),
+                    cancel_flag=task.cancel_flag)
+                upd.mark_pending(info, path)
+                TASKS.set_phase(task.tid, "更新已就绪，关闭程序后安装")
+                return path
+
+            def done(_p):
+                TASKS.finish(task.tid, "done", "更新包已就绪")
+
+            def err(e):
+                upd._log("自动下载更新失败：" + str(e)[:120])
+                TASKS.finish(task.tid, "failed", str(e)[:120])
+
+            run_async(work, on_done=done, on_err=err)
+
+        def check_err(e):
+            # 自动检查失败静默留痕，不打扰玩家（手动检查会给明确提示）
+            try:
+                upd._log("自动检查更新失败：" + str(e)[:120])
+            except Exception:                            # noqa: BLE001
+                pass
+
+        run_async(upd.check_for_update, on_done=checked, on_err=check_err)
 
     def _maybe_tour(self):
         # 只在「真的从入口启动」时自动走引导：回归脚本会直接 new MainWindow()，
@@ -1761,6 +1822,14 @@ class MainWindow(QWidget):
             pass
         try:
             CONFIG.save()
+        except Exception:
+            pass
+        # 第 124 轮：有待安装的更新就在这里调度分离进程 —— 它会等本进程真的
+        # 退出后再静默运行新向导覆盖 exe。必须在 exit(0) 之前安排好，
+        # 否则主进程一没，没人去装。仅 frozen + 有待安装标记才动作。
+        try:
+            from .core import update as _upd
+            _upd.schedule_silent_install()
         except Exception:
             pass
         if getattr(self, "tray", None):
