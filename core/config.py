@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 
 APP_NAME = "八桂启动器"
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 
 # 卸载程序的文件名（第五十一轮）：装进 `<安装目录>\<它>.exe`
 UNINSTALL_EXE_NAME = "卸载八桂启动器"
@@ -335,6 +335,12 @@ class Config:
             "auto_complete": True,
             # 自动中文（第五十五轮）：每次启动前把 options.txt 的 lang 写成 zh_cn
             "auto_chinese": True,
+            # 第一百二十四轮：启动器自更新。默认开——关程序后静默更新，下次打开即新版。
+            "auto_update": True,
+            # 仓库地址（空 = 用 update.py 默认 Yifengjin1/Bagui-Launcher；可改）
+            "update_repo": "",
+            # 上次检查到的最新版本（用于「有新版本」提示，不参与逻辑判断）
+            "update_last_seen": "",
             # 设置页的「小字注解」开关（第五十五轮）：默认隐藏，点右上角「?」才显示
             "show_tips": False,
             # 内置文件管理器（第六十轮）：选目录 / 选文件时用软件自己画的窗口，
