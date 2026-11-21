@@ -167,8 +167,26 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def setup_cache_dir():
+    """第 127 轮：安装向导（更新包）的缓存目录（数据目录下 cache/）。
+
+    玩家要求：下载完的向导缓存到 cache 里，安装完成后自动删除。
+    """
+    try:
+        from .config import app_data_dir
+        base = app_data_dir()
+    except Exception:                       # noqa: BLE001
+        base = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", DATA_DIR_NAME)
+    d = os.path.join(base, "cache")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
 def update_dir():
-    """下载的新向导暂存目录（在独立于安装目录的数据目录下）。"""
+    """更新元数据（pending.json / 日志）目录 —— 独立于安装目录的数据目录下。"""
     try:
         from .config import app_data_dir
         base = app_data_dir()
@@ -183,13 +201,15 @@ def update_dir():
 
 
 def download_setup(info, progress_cb=None, cancel_flag=None):
-    """下载新版安装向导 exe 到暂存目录，校验 SHA256 后返回本地路径。
+    """下载新版安装向导 exe 到缓存目录（cache/），校验 SHA256 后返回本地路径。
 
-    progress_cb(done, total) 单位是字节；cancel_flag 是单元素 list（[False]）。
+    第 127 轮起缓存到 `cache/bagui-setup-<版本>.exe`（玩家要求：安装前缓存在
+    cache 中，安装完成后由向导自己删掉）；progress_cb(done, total) 单位是字节；
+    cancel_flag 是单元素 list（[False]）。
     """
     if not info or not info.get("url"):
         raise RuntimeError("更新信息里没有下载地址")
-    dest = os.path.join(update_dir(), "bagui-setup-" + info["version"] + ".exe")
+    dest = os.path.join(setup_cache_dir(), "bagui-setup-" + info["version"] + ".exe")
     tmp = dest + ".part"
     expected_sha = str(info.get("sha256") or "").lower()
     expected_size = int(info.get("size") or 0)
@@ -250,11 +270,71 @@ def _pending_path():
     return os.path.join(update_dir(), "pending.json")
 
 
-def mark_pending(info, setup_path):
+# 第一百二十六轮：六种更新方式
+#   auto     = 关程序后后台静默更新（系统通知栏持续显示进度）
+#   now_fg   = 现在更新·前台（在弹窗里跑进度条）
+#   now_bg   = 现在更新·后台（主页下载区显示进度）
+#   game_end = 游戏结束并关窗后，在主页下载区显示进度
+#   netdisk  = 打开夸克网盘链接，启动器不下载
+#   later    = 稍后更新：下次打开程序再弹窗
+#   cancel   = 取消更新：只能手动点「检查更新」才会再弹窗
+MODES = ("auto", "now_fg", "now_bg", "game_end", "netdisk", "later", "cancel")
+
+
+def _defer_path():
+    return os.path.join(update_dir(), "deferred.json")
+
+
+def set_defer(info):
+    """「稍后更新」：记下版本，下次启动再弹（与 dismissed 区分：这个会自动清）。"""
+    try:
+        with open(_defer_path(), "w", encoding="utf-8") as f:
+            json.dump({"version": str(info.get("version") or "")}, f)
+    except OSError:
+        pass
+
+
+def take_defer():
+    """取出并清掉「稍后更新」标记（只在启动流程里调一次）。"""
+    try:
+        with open(_defer_path(), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        os.remove(_defer_path())
+        return str(d.get("version") or "") if isinstance(d, dict) else ""
+    except Exception:                       # noqa: BLE001
+        return ""
+
+
+def is_dismissed(info):
+    """「取消更新」：这个版本已被玩家划掉，自动检查不再打扰。"""
+    ver = str(info.get("version") or "")
+    return bool(ver) and str(CONFIG.get("update_dismissed", "") or "") == ver
+
+
+def dismiss(info):
+    CONFIG.set("update_dismissed", str(info.get("version") or ""))
+    try:
+        CONFIG.save()
+    except Exception:
+        pass
+
+
+def clear_dismiss():
+    """玩家主动点「检查更新」→ 解除 dismissed，让弹窗重新能出现。"""
+    if CONFIG.get("update_dismissed", ""):
+        CONFIG.set("update_dismissed", "")
+        try:
+            CONFIG.save()
+        except Exception:
+            pass
+
+
+def mark_pending(info, setup_path, mode="auto"):
     """记下「已下载好、等退出时安装」的更新。"""
     d = {
         "version": info.get("version", ""),
         "setup": os.path.abspath(setup_path),
+        "mode": mode,
         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(_pending_path(), "w", encoding="utf-8") as f:
@@ -292,9 +372,14 @@ def _log(msg):
         pass
 
 
-def schedule_silent_install():
-    """主程序退出时调用：起分离进程，等本进程消失后静默运行新向导。
+def schedule_wizard_install():
+    """主程序退出时调用：直接分离拉起新向导（GUI）完成更新安装。
 
+    第 127 轮：旧的「cmd bat 等 pid 退出再静默跑 --silent-update」在玩家机器上
+    经常整条走不通（cmd 被拦 / find 管道失败 / GBK 中文路径），整体换掉 ——
+    现在退出时直接启动缓存里的安装向导，由向导自己等本进程退出后亮出安装
+    界面自动安装（--wait-exit + --auto-install，见 setup_wizard._parse_update_args）。
+    向导的 `_copy_one` 本来就能在旧 exe 被占用时改名让位，就算等不到也能装上。
     只在本程序是 frozen（真安装版）且有待安装标记时才动作；开发模式不碰文件。
     返回是否成功调度（False = 无需更新 / 条件不符 / 调度失败，均不影响退出）。
     """
@@ -308,32 +393,38 @@ def schedule_silent_install():
         return False
     pid = os.getpid()
     try:
-        tmpd = tempfile.mkdtemp(prefix="bgl_update_")
-        bat = os.path.join(tmpd, "silent_install.bat")
-        # 等主程序进程真的退出（按 pid 轮询，最多 ~60s），再静默运行新向导。
-        # cmd 默认 GBK：中文路径必须按 gbk 写，否则 bat 里全是乱码。
-        lines = [
-            "@echo off", "chcp 936 >nul",
-            "set /a n=0",
-            ":wait",
-            f'tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL',
-            "if errorlevel 1 goto run",
-            "set /a n+=1",
-            "if %n% GEQ 60 goto run",
-            "ping -n 2 127.0.0.1 >nul",
-            "goto wait",
-            ":run",
-            f'start "" /b "{setup}" --silent-update',
-            'del /f /q "%~f0"',
-            "exit",
-        ]
-        with open(bat, "w", encoding="gbk", errors="replace") as f:
-            f.write("\r\n".join(lines) + "\r\n")
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | \
-            getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True)
-        _log(f"已调度静默更新：{setup}（等 pid {pid} 退出）")
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0)
+        subprocess.Popen([setup, "--wait-exit", str(pid), "--auto-install"],
+                         creationflags=flags, close_fds=True)
+        _log(f"已调度向导安装：{setup}（等 pid {pid} 退出后自动安装）")
         return True
     except Exception as e:                  # noqa: BLE001
-        _log("调度静默更新失败：" + str(e))
+        _log("调度向导安装失败：" + str(e))
         return False
+
+
+# 兼容旧调用名（main._on_launcher_exit 与 r124 探针都认这个名字）
+schedule_silent_install = schedule_wizard_install
+
+
+def cleanup_installed_cache():
+    """第 127 轮：启动时扫掉「装完就删」机制留下的缓存残骸。
+
+    向导安装成功后会删掉缓存里的 bagui-setup-*.exe；正在运行的那个删不掉，
+    向导会把它改名成 `.installed.old` 让位 —— 这里把残骸和中断的 .part
+    一起清掉。绝不动 pending 里还没装的正主。
+    """
+    d = setup_cache_dir()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        p = os.path.join(d, n)
+        if not os.path.isfile(p):
+            continue
+        if n.lower().endswith((".installed.old", ".part")):
+            try:
+                os.remove(p)
+            except OSError:
+                pass

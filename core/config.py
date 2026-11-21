@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 
 APP_NAME = "八桂启动器"
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.9.4"
 
 # 卸载程序的文件名（第五十一轮）：装进 `<安装目录>\<它>.exe`
 UNINSTALL_EXE_NAME = "卸载八桂启动器"
@@ -337,10 +337,15 @@ class Config:
             "auto_chinese": True,
             # 第一百二十四轮：启动器自更新。默认开——关程序后静默更新，下次打开即新版。
             "auto_update": True,
+            # 第一百二十六轮：自动检查。默认开——启动时后台查新版，查到弹「更新方式」六选一征询；
+            # 关掉则回到旧逻辑（后台静默下载，关程序静默装），不弹窗打扰。
+            "auto_check": True,
             # 仓库地址（空 = 用 update.py 默认 Yifengjun1/Bagui-Launcher；可改）
             "update_repo": "",
             # 上次检查到的最新版本（用于「有新版本」提示，不参与逻辑判断）
             "update_last_seen": "",
+            # 被玩家点「取消更新」的版本号：这个版本不再自动弹窗，直到手动点检查更新
+            "update_dismissed": "",
             # 设置页的「小字注解」开关（第五十五轮）：默认隐藏，点右上角「?」才显示
             "show_tips": False,
             # 内置文件管理器（第六十轮）：选目录 / 选文件时用软件自己画的窗口，

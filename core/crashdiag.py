@@ -459,10 +459,80 @@ def loader_excerpt(text: str, limit: int = 1600, span: int = 16) -> str:
     return _clip(out, limit)
 
 
+def memory_shortage(info: dict, text: str = "") -> dict | None:
+    """第一百二十六轮：判定「是不是内存分配不足导致的崩溃」。
+
+    用户反馈：内存不够崩了却提示「多半是某个模组的问题」，误导玩家去删模组。
+    判据（满足任一即认为内存不足，优先级高于模组）：
+      ① 日志里有 Java OOM / GC overhead 字样；
+      ② 退出码是 0xC0000005 / 0xC000001D 这类「进程被系统干掉」，且本次分配的
+         内存偏小（< 推荐值的一半）——这是 -Xmx 太小、堆溢出后被 Windows 杀掉的
+         典型形态，日志里往往没有 Java OOM 那行字；
+      ③ 存活极短（< 25 秒）且分配内存 < 3GB —— 进了世界就 GC 死。
+    返回 reason 字典；不是内存问题返回 None。"""
+    from . import ram as _ram
+    mb = int(info.get("memory_mb") or 0)
+    # 推荐值按这个游戏实际模组数算（现场字典没带 mods，就从游戏目录数）
+    mods = int(info.get("mods") or 0)
+    if not mods:
+        gd = str(info.get("cwd") or info.get("game_dir") or "")
+        if gd:
+            try:
+                mods = _ram.count_mods(os.path.join(gd, "mods"))
+            except Exception:
+                mods = 0
+    try:
+        rec, _ = _ram.auto_alloc(mods)
+    except Exception:
+        rec = 4096
+    oom_hit = bool(re.search(r"OutOfMemoryError|Java heap space|GC overhead limit exceeded",
+                             text or "", re.I))
+    try:
+        u = int(info.get("code")) & 0xFFFFFFFF
+    except (TypeError, ValueError):
+        u = 0
+    killed = u in (0xC0000005, 0xC000001D, 0xC0000409)
+    lived = info.get("lived")
+    try:
+        lived = float(lived)
+    except (TypeError, ValueError):
+        lived = None
+    short_lived = lived is not None and lived < 25
+    # 分配值明显低于「这个包该给的量」就算偏低（85% 阈值：大包给 4G 而推荐 6G+ 必判低）
+    low = bool(mb) and mb < max(2560, int(rec * 0.85))
+    if not (oom_hit or (killed and low) or (short_lived and low)):
+        return None
+    detail_bits = []
+    if mb:
+        detail_bits.append(f"本次给游戏分配了 {mb} MB")
+        if rec:
+            detail_bits.append(f"按当前模组数建议 {rec} MB")
+    if u:
+        detail_bits.append(f"退出码 0x{u:08X}（进程被系统结束）")
+    if oom_hit:
+        detail_bits.append("日志里出现 Java 堆溢出 / GC 超限")
+    return {
+        "kind": "oom",
+        "title": "内存分配不足（不是模组的问题）",
+        "detail": "；".join(detail_bits) or "堆内存不足以支撑当前整合包。",
+        "mods": [], "fix": "",
+        "hint": "到「设置 → 运行内存」把分配调大，或改成「自动配置」——"
+                "新版按模组数用 PCL2 四阶段算法计算，大整合包会比旧版多给。"
+                "若已是自动仍不够，再回来精简模组；顺序不要反。",
+    }
+
+
 def analyze(info: dict) -> dict:
     """主入口：返回 {summary, reasons:[...], missing:[...], suspects:[...], text}"""
     text = _text_of(info)
     reasons = []
+
+    # ---- ⓪-b 内存不足（第 126 轮）：排在模组/缺前置之前 ----
+    # 用户反馈：内存不够崩了却提示「多半是某个模组的问题」。内存是更常见的
+    # 真因且能一键调，提到最前面；但加载器没装全仍是最硬的判据，留给它。
+    mem_reason = memory_shortage(info, text)
+    if mem_reason:
+        reasons.append(mem_reason)
 
     # ---- ⓪ 加载器只装了一半（必须排在「缺前置」前面，理由见上面那段注释） ----
     broken_loader = loader_broken(text)
